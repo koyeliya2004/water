@@ -1,0 +1,20 @@
+{
+  "name": "rainwater-harvesting-app",
+  "version": "1.0.0",
+  "description": "Rooftop Rainwater Harvesting & Artificial Recharge Assessment Application",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ]
+}
