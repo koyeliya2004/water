@@ -1,6 +1,18 @@
 const express = require('express');
 const router = express.Router();
 
+const createSeededRandom = (seed) => {
+  let value = seed;
+  return () => {
+    value = Math.sin(value) * 10000;
+    return value - Math.floor(value);
+  };
+};
+
+const createCoordinateSeed = (latitude, longitude) => {
+  return Math.abs(Math.sin(latitude * 12.9898 + longitude * 78.233) * 43758.5453);
+};
+
 // CGWB-inspired aquifer data by region
 const aquiferData = {
   'alluvial-plain': {
@@ -25,7 +37,7 @@ const aquiferData = {
     depthToWater: '5-25 meters',
     principalAquifer: true
   },
-  'sedimentary': {
+  sedimentary: {
     name: 'Sedimentary Basin Aquifer',
     type: 'Confined to Unconfined',
     lithology: 'Sandstone, Limestone, Shale',
@@ -36,7 +48,7 @@ const aquiferData = {
     depthToWater: '10-40 meters',
     principalAquifer: true
   },
-  'coastal': {
+  coastal: {
     name: 'Coastal Aquifer',
     type: 'Unconfined to Confined',
     lithology: 'Sand, Gravel with clay lenses',
@@ -47,7 +59,7 @@ const aquiferData = {
     depthToWater: '2-10 meters',
     principalAquifer: true
   },
-  'island': {
+  island: {
     name: 'Island Aquifer',
     type: 'Lens-shaped freshwater',
     lithology: 'Coral sand, Limestone',
@@ -98,30 +110,86 @@ const stateAquiferMap = {
   'north-east': 'hard-rock'
 };
 
+const buildVisualizationLayers = (aquiferKey, random) => {
+  const weatheredThickness = aquiferKey === 'hard-rock' ? 18 : 10;
+  const saturatedThickness = aquiferKey === 'sedimentary' ? 120 : aquiferKey === 'alluvial-plain' ? 70 : 45;
+
+  const layers = [
+    {
+      name: 'Top Soil',
+      thickness: 1.5 + random() * 0.8,
+      material: 'Soil',
+      color: '#FDE68A'
+    },
+    {
+      name: 'Weathered Zone',
+      thickness: weatheredThickness + random() * 6,
+      material: 'Weathered Rock/Alluvium',
+      color: '#FCD34D'
+    },
+    {
+      name: 'Saturated Zone',
+      thickness: saturatedThickness + random() * 20,
+      material: 'Aquifer',
+      color: '#38BDF8'
+    },
+    {
+      name: 'Bedrock',
+      thickness: 80 + random() * 60,
+      material: 'Fresh Rock',
+      color: '#9CA3AF'
+    }
+  ];
+
+  let depthCursor = 0;
+  return layers.map((layer) => {
+    const depthTop = depthCursor;
+    const depthBottom = depthCursor + layer.thickness;
+    depthCursor = depthBottom;
+
+    return {
+      ...layer,
+      depthTop: Math.round(depthTop * 10) / 10,
+      depthBottom: Math.round(depthBottom * 10) / 10
+    };
+  });
+};
+
 // POST /api/aquifer/info
 router.post('/info', (req, res) => {
   try {
     const { latitude, longitude, state } = req.body;
-    
-    // Determine aquifer type based on state
-    const stateKey = state.toLowerCase().replace(/\s+/g, '-');
+
+    const stateKey = state?.toLowerCase().replace(/\s+/g, '-') || '';
     const aquiferKey = stateAquiferMap[stateKey] || 'hard-rock';
     const aquifer = aquiferData[aquiferKey];
-    
-    // Generate 3D visualization data
+
+    const seed = createCoordinateSeed(Number(latitude) || 0, Number(longitude) || 0);
+    const random = createSeededRandom(seed);
+
+    const visualizationLayers = buildVisualizationLayers(aquiferKey, random);
+    const waterTableDepth = Math.round((parseInt(aquifer.depthToWater.split('-')[0], 10) + random() * 6) * 10) / 10;
+    const surfaceElevation = Math.round(60 + random() * 200);
+
+    const preMonsoon = Math.round((waterTableDepth + 1.5 + random() * 1.5) * 10) / 10;
+    const postMonsoon = Math.round((waterTableDepth - 1.5 - random() * 1.5) * 10) / 10;
+
+    const decliningRate = Math.round((0.2 + random() * 0.6) * 10) / 10;
+    const historical = [
+      { year: 2010, depth: Math.round((waterTableDepth - decliningRate * 3) * 10) / 10 },
+      { year: 2015, depth: Math.round((waterTableDepth - decliningRate * 1.5) * 10) / 10 },
+      { year: 2020, depth: Math.round((waterTableDepth - decliningRate * 0.5) * 10) / 10 },
+      { year: 2024, depth: Math.round(waterTableDepth * 10) / 10 }
+    ];
+
     const visualization3D = {
       surface: {
-        elevation: Math.round(50 + Math.random() * 200),
-        terrain: 'Plain to undulating'
+        elevation: surfaceElevation,
+        terrain: aquiferKey === 'hard-rock' ? 'Undulating plateau' : 'Alluvial plain'
       },
-      layers: [
-        { name: 'Top Soil', thickness: 1.5, material: 'Soil' },
-        { name: 'Weathered Zone', thickness: aquiferKey === 'hard-rock' ? 15 : 8, material: 'Weathered Rock/Alluvium' },
-        { name: 'Saturated Zone', thickness: parseInt(aquifer.thickness.split('-')[0]), material: 'Aquifer' },
-        { name: 'Bedrock', thickness: 100, material: 'Fresh Rock' }
-      ],
+      layers: visualizationLayers,
       waterTable: {
-        depth: parseInt(aquifer.depthToWater.split('-')[0]) + Math.random() * 5,
+        depth: waterTableDepth,
         seasonalVariation: '2-5 meters'
       }
     };
@@ -135,9 +203,14 @@ router.post('/info', (req, res) => {
           category: aquiferKey
         },
         visualization3D,
+        groundwaterLevels: {
+          preMonsoonDepth: preMonsoon,
+          postMonsoonDepth: postMonsoon,
+          historical
+        },
         groundwaterTrend: {
-          status: Math.random() > 0.5 ? 'Declining' : 'Stable',
-          rate: Math.round(Math.random() * 30) / 10, // m/year
+          status: random() > 0.5 ? 'Declining' : 'Stable',
+          rate: decliningRate,
           period: '2010-2023'
         },
         recommendations: [
@@ -169,10 +242,9 @@ router.get('/types', (req, res) => {
 router.post('/depth', (req, res) => {
   try {
     const { latitude, longitude } = req.body;
-    
-    // Simulate depth data based on coordinates
+
     const baseDepth = 5 + Math.random() * 20;
-    
+
     res.json({
       success: true,
       data: {
