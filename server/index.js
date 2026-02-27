@@ -28,6 +28,7 @@ app.use('/api/assessment', assessmentRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/aquifer', aquiferRoutes);
 app.use('/api/roof-detection', roofDetectionRoutes);
+app.use('/api/roof-detect', roofDetectionRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
