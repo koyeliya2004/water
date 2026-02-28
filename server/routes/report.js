@@ -99,7 +99,7 @@ router.post('/generate-pdf', async (req, res) => {
 // POST /api/report/blueprint
 router.post('/blueprint', async (req, res) => {
   try {
-    const { assessmentData, userInfo } = req.body;
+    const { assessmentData, userInfo, language = 'en' } = req.body;
     
     const doc = new PDFDocument();
     const filename = `RWH_Blueprint_${Date.now()}.pdf`;
@@ -108,85 +108,191 @@ router.post('/blueprint', async (req, res) => {
     const stream = fs.createWriteStream(filepath);
     doc.pipe(stream);
     
-    // Title
-    doc.fontSize(24).text('DIY Installation Blueprint', 50, 50);
-    doc.fontSize(14).text('Complete Guide for Rooftop Rainwater Harvesting System', 50, 80);
+    // Language titles
+    const titles = {
+      en: 'DIY Installation Blueprint',
+      hi: 'स्वयं-स्थापना ब्लूप्रिंट',
+    };
     
-    // Bill of Materials
-    doc.fontSize(16).text('Bill of Materials', 50, 120);
+    const lang = language === 'hi' ? 'hi' : 'en';
+    
+    // Title
+    doc.fontSize(24).text(titles[lang], 50, 50);
+    doc.fontSize(14).text('Complete Guide for Rooftop Rainwater Harvesting System', 50, 80);
+    doc.fontSize(10).text(`Language: ${lang === 'hi' ? 'Hindi' : 'English'}`, 50, 100);
+    
+    // Project Details
+    doc.fontSize(12).text('Project Details', 50, 130);
+    doc.fontSize(10);
+    doc.text(`Property: ${userInfo?.name || 'N/A'}`, 50, 150);
+    doc.text(`Location: ${userInfo?.location || 'N/A'}, ${userInfo?.state || 'N/A'}`, 50, 165);
+    doc.text(`Structure Type: ${assessmentData.structure.type}`, 50, 180);
+    doc.text(`Roof Area: ${assessmentData.roofArea || assessmentData.runoff.potential / 100} sq ft`, 50, 195);
+    
+    // Bill of Materials with localized prices
+    doc.fontSize(16).text('Bill of Materials (BOM)', 50, 230);
     doc.fontSize(10);
     
     const bom = [
-      { item: 'Rainwater Filter', qty: 1, unit: 'nos', price: 8500 },
-      { item: 'Storage Tank', qty: Math.ceil(assessmentData.storage.required / 1000), unit: 'nos', price: 8000 },
-      { item: 'PVC Pipes (3 inch)', qty: Math.ceil(Math.sqrt(assessmentData.runoff.potential / 100)), unit: 'meters', price: 180 },
-      { item: 'Gutter System', qty: Math.ceil(Math.sqrt(assessmentData.runoff.potential / 50)), unit: 'meters', price: 250 },
+      { item: 'Rainwater Filter (Basic)', qty: 1, unit: 'nos', price: 3500 },
+      { item: 'Rainwater Filter (Advanced)', qty: 1, unit: 'nos', price: 8500 },
+      { item: 'Storage Tank (1000L)', qty: Math.ceil(assessmentData.storage?.required / 1000 || 1), unit: 'nos', price: 4500 },
+      { item: 'Storage Tank (2000L)', qty: Math.ceil(assessmentData.storage?.required / 2000 || 0), unit: 'nos', price: 8000 },
+      { item: 'PVC Pipes (3 inch)', qty: Math.ceil(Math.sqrt(assessmentData.runoff?.potential / 100 || 100)), unit: 'meters', price: 180 },
+      { item: 'PVC Pipes (4 inch)', qty: Math.ceil(Math.sqrt(assessmentData.runoff?.potential / 100 || 50)), unit: 'meters', price: 250 },
+      { item: 'Gutter System', qty: Math.ceil(Math.sqrt(assessmentData.runoff?.potential / 50 || 50)), unit: 'meters', price: 250 },
       { item: 'First Flush Diverter', qty: 1, unit: 'nos', price: 2200 },
-      { item: 'Gravel (for recharge)', qty: Math.ceil(assessmentData.structure.volume / 1000), unit: 'cubic meters', price: 1500 },
-      { item: 'Sand', qty: Math.ceil(assessmentData.structure.volume / 2000), unit: 'cubic meters', price: 800 },
+      { item: 'Gravel (for recharge)', qty: Math.ceil(assessmentData.structure?.volume / 1000 || 1), unit: 'cubic meters', price: 1500 },
+      { item: 'Sand', qty: Math.ceil(assessmentData.structure?.volume / 2000 || 0.5), unit: 'cubic meters', price: 800 },
       { item: 'Cement', qty: 10, unit: 'bags', price: 400 },
-      { item: 'Labor (skilled)', qty: 5, unit: 'days', price: 1200 },
-      { item: 'Labor (unskilled)', qty: 10, unit: 'days', price: 800 }
+      { item: 'Bricks', qty: 500, unit: 'pieces', price: 8 },
+      { item: 'Ball Valve', qty: 2, unit: 'nos', price: 150 },
+      { item: 'Elbow (3 inch)', qty: 10, unit: 'nos', price: 45 },
+      { item: 'T-Joint (3 inch)', qty: 5, unit: 'nos', price: 55 },
+      { item: 'Labor (Skilled)', qty: 5, unit: 'days', price: 1200 },
+      { item: 'Labor (Unskilled)', qty: 10, unit: 'days', price: 800 },
     ];
     
-    let y = 145;
+    // Filter out items with 0 quantity
+    const filteredBom = bom.filter(item => item.qty > 0);
+    
+    let y = 255;
     let totalCost = 0;
     
     doc.text('Item', 50, y);
-    doc.text('Qty', 300, y);
-    doc.text('Unit', 350, y);
-    doc.text('Price', 450, y);
-    doc.text('Amount', 520, y);
+    doc.text('Qty', 280, y);
+    doc.text('Unit', 340, y);
+    doc.text('Price (₹)', 420, y);
+    doc.text('Amount (₹)', 500, y);
     
-    y += 20;
+    y += 15;
     doc.moveTo(50, y - 5).lineTo(580, y - 5).stroke();
     
-    bom.forEach(item => {
+    filteredBom.forEach(item => {
       const amount = item.qty * item.price;
       totalCost += amount;
       doc.text(item.item, 50, y);
-      doc.text(item.qty.toString(), 300, y);
-      doc.text(item.unit, 350, y);
-      doc.text(`₹${item.price}`, 450, y);
-      doc.text(`₹${amount.toLocaleString()}`, 520, y);
-      y += 18;
+      doc.text(item.qty.toString(), 280, y);
+      doc.text(item.unit, 340, y);
+      doc.text(item.price.toString(), 420, y);
+      doc.text(amount.toLocaleString(), 500, y);
+      y += 16;
     });
     
     doc.moveTo(50, y - 5).lineTo(580, y - 5).stroke();
     doc.fontSize(12).text(`Total Estimated Cost: ₹${totalCost.toLocaleString()}`, 350, y + 10);
     
-    // Installation Steps
-    y += 50;
-    doc.fontSize(16).text('Installation Steps', 50, y);
-    y += 30;
+    // Cost breakdown by category
+    y += 45;
+    doc.fontSize(14).text('Cost Breakdown by Category', 50, y);
+    y += 20;
+    doc.fontSize(10);
     
-    doc.fontSize(11);
-    const steps = [
+    const materialsCost = filteredBom.filter(i => !i.item.includes('Labor')).reduce((sum, i) => sum + (i.qty * i.price), 0);
+    const laborCost = filteredBom.filter(i => i.item.includes('Labor')).reduce((sum, i) => sum + (i.qty * i.price), 0);
+    
+    doc.text(`Materials: ₹${materialsCost.toLocaleString()} (${Math.round(materialsCost/totalCost*100)}%)`, 50, y);
+    y += 15;
+    doc.text(`Labor: ₹${laborCost.toLocaleString()} (${Math.round(laborCost/totalCost*100)}%)`, 50, y);
+    y += 15;
+    doc.text(`Total: ₹${totalCost.toLocaleString()}`, 50, y);
+    
+    // Installation Steps
+    y += 40;
+    doc.fontSize(16).text('Installation Steps', 50, y);
+    y += 25;
+    
+    const steps = lang === 'hi' ? [
+      'चरण 1: स्थल तैयारी - क्षेत्र को साफ करें और आयाम चिह्नित करें',
+      'चरण 2: नाली स्थापना - छत के किनारों पर नालियाँ स्थापित करें',
+      'चरण 3: डाउनपाइप सेटअप - नालियों को डाउनपाइप से जोड़ें',
+      'चरण 4: फ़िल्टर स्थापना - प्रथम फ्लश डाइवर्टर और फ़िल्टर स्थापित करें',
+      'चरण 5: भंडारण टैंक - भंडारण टैंक को रखें और जोड़ें',
+      'चरण 6: रिचार्ज संरचना - खोदें और रिचार्ज पिट/ट्रेंच का निर्माण करें',
+      'चरण 7: ओवरफ़्लो प्रबंधन - रिचार्ज संरचना से ओवरफ़्लो को जोड़ें',
+      'चरण 8: परीक्षण - पानी के साथ पूर्ण प्रणाली का परीक्षण करें'
+    ] : [
       'Step 1: Site Preparation - Clear the area and mark dimensions',
       'Step 2: Gutter Installation - Install gutters along roof edges',
       'Step 3: Downpipe Setup - Connect downpipes to gutters',
       'Step 4: Filter Installation - Install first flush diverter and filter',
-      'Step 5: Storage Tank - Position and connect storage tank',
+      'Step 5: Storage Tank Setup - Position and connect storage tank',
       'Step 6: Recharge Structure - Excavate and construct recharge pit/trench',
       'Step 7: Overflow Management - Connect overflow to recharge structure',
-      'Step 8: Testing - Test the complete system with water'
+      'Step 8: System Testing - Test the complete system with water'
     ];
     
+    doc.fontSize(11);
     steps.forEach(step => {
       doc.text(step, 50, y);
-      y += 20;
+      y += 22;
     });
     
     // Technical Specifications
     y += 20;
-    doc.fontSize(16).text('Technical Specifications', 50, y);
-    y += 30;
+    doc.fontSize(14).text('Technical Specifications', 50, y);
+    y += 20;
     doc.fontSize(10);
     
-    doc.text(`Structure Type: ${assessmentData.structure.type}`, 50, y);
-    doc.text(`Storage Capacity: ${assessmentData.storage.required.toLocaleString()} liters`, 50, y + 15);
-    doc.text(`Expected Runoff: ${assessmentData.runoff.potential.toLocaleString()} liters/year`, 50, y + 30);
-    doc.text(`Soil Type: ${assessmentData.soil.structure}`, 50, y + 45);
+    doc.text(`Structure Type: ${assessmentData.structure?.type || 'Combined'}`, 50, y);
+    doc.text(`Storage Capacity: ${assessmentData.storage?.required?.toLocaleString() || 'N/A'} liters`, 50, y + 15);
+    doc.text(`Expected Runoff: ${assessmentData.runoff?.potential?.toLocaleString() || 'N/A'} liters/year`, 50, y + 30);
+    doc.text(`Soil Type: ${assessmentData.soil?.structure || 'Sandy Loam'}`, 50, y + 45);
+    doc.text(`Annual Rainfall: ${assessmentData.rainfall?.annual || 'N/A'} mm`, 50, y + 60);
+    
+    // Safety Guidelines
+    y += 90;
+    doc.fontSize(14).text('Safety Guidelines', 50, y);
+    y += 20;
+    doc.fontSize(10);
+    
+    const safetyGuidelines = lang === 'hi' ? [
+      '⚠️ खुदाई के दौरान सुरक्षा उपकरण पहनें',
+      '⚠️ बिजली के कार्य के लिए प्रशिक्षित व्यक्ति को काम सौंपें',
+      '⚠️ सुनिश्चित करें कि कार्यस्थल सुखा हुआ हो',
+      '⚠️ भारी सामग्री उठाने के लिए सहायता लें',
+      '⚠️ पानी के संपर्क में आने से बचें यदि आपके पास खुले घाव हैं'
+    ] : [
+      '⚠️ Wear safety equipment while digging',
+      '⚠️ Hire trained personnel for electrical work',
+      '⚠️ Ensure the workplace is dry',
+      '⚠️ Get help when lifting heavy materials',
+      '⚠️ Avoid contact with water if you have open wounds'
+    ];
+    
+    safetyGuidelines.forEach(guideline => {
+      doc.text(guideline, 50, y);
+      y += 15;
+    });
+    
+    // Maintenance Schedule
+    y += 20;
+    doc.fontSize(14).text('Maintenance Schedule', 50, y);
+    y += 20;
+    doc.fontSize(10);
+    
+    const maintenance = lang === 'hi' ? [
+      'मासिक: फ़िल्टर सफाई, नाली जाँच',
+      'त्रैमासिक: टैंक सफाई, वाल्व जाँच',
+      'वार्षिक: पूर्ण प्रणाली निरीक्षण, रखरखाव'
+    ] : [
+      'Monthly: Filter cleaning, gutter inspection',
+      'Quarterly: Tank cleaning, valve check',
+      'Annual: Full system inspection, maintenance'
+    ];
+    
+    maintenance.forEach(item => {
+      doc.text(`• ${item}`, 50, y);
+      y += 15;
+    });
+    
+    // Footer
+    doc.fontSize(9).text(
+      lang === 'hi' 
+        ? 'यह रिपोर्ट RTRWH ऐप द्वारा बनाई गई है। अधिक जानकारी के लिए हमारी वेबसाइट देखें।' 
+        : 'This report is generated by RTRWH App. For more information, visit our website.',
+      50, 750
+    );
     
     doc.end();
     
@@ -196,12 +302,72 @@ router.post('/blueprint', async (req, res) => {
         data: {
           downloadUrl: `/uploads/${filename}`,
           filename: filename,
-          billOfMaterials: bom,
-          estimatedCost: totalCost
+          billOfMaterials: filteredBom,
+          estimatedCost: totalCost,
+          language: lang,
         }
       });
     });
     
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/report/blueprint-templates
+router.get('/blueprint-templates', async (req, res) => {
+  try {
+    const { type, difficulty } = req.query;
+    
+    const templates = [
+      {
+        id: 'bp1',
+        name: 'Basic Storage System',
+        type: 'storage',
+        difficulty: 'easy',
+        estimatedTime: { value: 2, unit: 'days' },
+        description: 'Simple rooftop rainwater harvesting with storage tank',
+      },
+      {
+        id: 'bp2',
+        name: 'Recharge Pit System',
+        type: 'recharge',
+        difficulty: 'medium',
+        estimatedTime: { value: 3, unit: 'days' },
+        description: 'Groundwater recharge pit for artificial recharge',
+      },
+      {
+        id: 'bp3',
+        name: 'Combined Storage & Recharge',
+        type: 'combined',
+        difficulty: 'hard',
+        estimatedTime: { value: 5, unit: 'days' },
+        description: 'Complete system with both storage and recharge',
+      },
+      {
+        id: 'bp4',
+        name: 'Smart Monitoring System',
+        type: 'smart',
+        difficulty: 'medium',
+        estimatedTime: { value: 2, unit: 'days' },
+        description: 'IoT-enabled system with water level monitoring',
+      },
+    ];
+
+    let filtered = [...templates];
+    
+    if (type) {
+      filtered = filtered.filter(t => t.type === type);
+    }
+    
+    if (difficulty) {
+      filtered = filtered.filter(t => t.difficulty === difficulty);
+    }
+
+    res.json({
+      success: true,
+      data: filtered,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

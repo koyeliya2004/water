@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
+const Vendor = require('../models/Vendor');
+const Review = require('../models/Review');
+const QuoteRequest = require('../models/QuoteRequest');
+const authMiddleware = require('../middleware/auth');
 
-// Mock vendor database
-const vendors = [
+// Mock vendor database (fallback)
+const mockVendors = [
   {
     id: 'v1',
     name: 'AquaHarvest Solutions',
@@ -85,46 +89,277 @@ const products = [
   { id: 'p10', name: 'Submersible Pump (0.5HP)', price: 6500, unit: 'piece', category: 'Pumps' }
 ];
 
+// Helper to convert Vendor mongoose doc to plain object
+const vendorToObj = (vendor) => ({
+  id: vendor._id,
+  _id: vendor._id,
+  name: vendor.name,
+  location: vendor.location,
+  services: vendor.services,
+  rating: vendor.rating,
+  reviewCount: vendor.reviewCount,
+  completedProjects: vendor.completedProjects,
+  contact: { phone: vendor.phone, email: vendor.email },
+  verified: vendor.verified,
+  priceRange: vendor.priceRange,
+  portfolio: vendor.portfolio,
+  certifications: vendor.certifications,
+  specialties: vendor.specialties,
+  experience: vendor.experience,
+});
+
 // GET /api/marketplace/vendors
-router.get('/vendors', (req, res) => {
-  const { location, service, verified } = req.query;
-  
-  let filtered = [...vendors];
-  
-  if (location) {
-    filtered = filtered.filter(v => 
-      v.location.toLowerCase().includes(location.toLowerCase())
-    );
+router.get('/vendors', async (req, res) => {
+  const { location, service, verified, rating, priceRange, sort, page = 1, limit = 20 } = req.query;
+
+  try {
+    // Try to get vendors from database
+    let vendors;
+    try {
+      const query = {};
+      
+      if (location) {
+        query.$or = [
+          { 'location.city': { $regex: location, $options: 'i' } },
+          { 'location.state': { $regex: location, $options: 'i' } },
+        ];
+      }
+      
+      if (service) {
+        query.services = { $in: [new RegExp(service, 'i')] };
+      }
+      
+      if (verified === 'true') {
+        query.verified = true;
+      }
+      
+      if (priceRange) {
+        query.priceRange = priceRange;
+      }
+      
+      if (rating) {
+        query.rating = { $gte: parseFloat(rating) };
+      }
+
+      let sortObj = { rating: -1 };
+      if (sort === 'projects') sortObj = { completedProjects: -1 };
+      if (sort === 'newest') sortObj = { createdAt: -1 };
+
+      vendors = await Vendor.find(query)
+        .sort(sortObj)
+        .skip((page - 1) * limit)
+        .limit(parseInt(limit));
+
+      if (vendors.length > 0) {
+        return res.json({
+          success: true,
+          data: vendors.map(vendorToObj),
+          count: vendors.length,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+          },
+        });
+      }
+    } catch (dbError) {
+      console.log('Using mock vendors:', dbError.message);
+    }
+
+    // Fallback to mock vendors
+    let filtered = [...mockVendors];
+    
+    if (location) {
+      filtered = filtered.filter(v => 
+        v.location.toLowerCase().includes(location.toLowerCase())
+      );
+    }
+    
+    if (service) {
+      filtered = filtered.filter(v => 
+        v.services.some(s => s.toLowerCase().includes(service.toLowerCase()))
+      );
+    }
+    
+    if (verified === 'true') {
+      filtered = filtered.filter(v => v.verified);
+    }
+
+    if (rating) {
+      filtered = filtered.filter(v => v.rating >= parseFloat(rating));
+    }
+
+    if (priceRange) {
+      filtered = filtered.filter(v => v.priceRange === priceRange);
+    }
+
+    if (sort === 'projects') {
+      filtered.sort((a, b) => b.completedProjects - a.completedProjects);
+    }
+
+    res.json({
+      success: true,
+      data: filtered,
+      count: filtered.length,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
-  
-  if (service) {
-    filtered = filtered.filter(v => 
-      v.services.some(s => s.toLowerCase().includes(service.toLowerCase()))
-    );
-  }
-  
-  if (verified === 'true') {
-    filtered = filtered.filter(v => v.verified);
-  }
-  
-  res.json({
-    success: true,
-    data: filtered,
-    count: filtered.length
-  });
 });
 
 // GET /api/marketplace/vendors/:id
-router.get('/vendors/:id', (req, res) => {
-  const vendor = vendors.find(v => v.id === req.params.id);
+router.get('/vendors/:id', async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.params.id);
+    
+    if (vendor) {
+      const reviews = await Review.find({ vendorId: vendor._id, status: 'approved' })
+        .populate('userId', 'name avatar')
+        .sort({ createdAt: -1 })
+        .limit(10);
+
+      return res.json({
+        success: true,
+        data: {
+          ...vendorToObj(vendor),
+          reviews: reviews.map(r => ({
+            _id: r._id,
+            rating: r.rating,
+            title: r.title,
+            comment: r.comment,
+            userId: r.userId,
+            createdAt: r.createdAt,
+          })),
+        },
+      });
+    }
+  } catch (dbError) {
+    console.log('Trying mock vendor');
+  }
+
+  const vendor = mockVendors.find(v => v.id === req.params.id);
   if (!vendor) {
     return res.status(404).json({ success: false, error: 'Vendor not found' });
   }
-  
+
   res.json({
     success: true,
     data: vendor
   });
+});
+
+// GET /api/marketplace/vendors/compare
+router.get('/vendors/compare', async (req, res) => {
+  try {
+    const { ids } = req.query;
+    
+    if (!ids) {
+      return res.status(400).json({
+        success: false,
+        error: 'Vendor IDs required'
+      });
+    }
+
+    const vendorIds = ids.split(',');
+    const vendors = [];
+
+    for (const id of vendorIds) {
+      try {
+        const vendor = await Vendor.findById(id.trim());
+        if (vendor) {
+          vendors.push(vendorToObj(vendor));
+        }
+      } catch {
+        const mockVendor = mockVendors.find(v => v.id === id.trim());
+        if (mockVendor) {
+          vendors.push(mockVendor);
+        }
+      }
+    }
+
+    // Create comparison object
+    const comparison = {
+      vendors,
+      comparison: vendors.map(v => ({
+        id: v.id,
+        name: v.name,
+        rating: v.rating,
+        completedProjects: v.completedProjects,
+        priceRange: v.priceRange,
+        verified: v.verified,
+        services: v.services,
+        location: v.location,
+      })),
+    };
+
+    res.json({
+      success: true,
+      data: comparison,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/marketplace/vendors/:id/reviews
+router.post('/vendors/:id/reviews', authMiddleware.auth, async (req, res) => {
+  try {
+    const { rating, title, comment, aspects, project } = req.body;
+
+    const vendorId = req.params.id;
+    
+    // Find vendor (mock or real)
+    let vendor;
+    try {
+      vendor = await Vendor.findById(vendorId);
+    } catch {
+      vendor = mockVendors.find(v => v.id === vendorId);
+    }
+
+    if (!vendor) {
+      return res.status(404).json({
+        success: false,
+        error: 'Vendor not found'
+      });
+    }
+
+    // Create review in DB if vendor exists
+    if (vendor._id) {
+      const review = new Review({
+        vendorId: vendor._id,
+        userId: req.user.id,
+        rating,
+        title,
+        comment,
+        aspects,
+        project,
+        status: 'approved', // Auto-approve for now
+      });
+
+      await review.save();
+      
+      // Update vendor rating
+      const avgRating = await Review.getAverageRating(vendor._id);
+      await Vendor.findByIdAndUpdate(vendor._id, {
+        rating: avgRating.averageRating,
+        reviewCount: avgRating.count,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: review,
+      });
+    } else {
+      res.status(201).json({
+        success: true,
+        data: {
+          message: 'Review submitted (mock vendor)',
+          rating,
+        },
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // GET /api/marketplace/products
@@ -211,12 +446,64 @@ router.post('/estimate', (req, res) => {
   }
 });
 
-// POST /api/marketplace/request-quote
+// POST /api/marketplace/quote-request (authenticated)
+router.post('/quote-request', authMiddleware.auth, async (req, res) => {
+  try {
+    const { vendorId, requirements, assessmentData } = req.body;
+
+    // Find vendor
+    let vendor;
+    try {
+      vendor = await Vendor.findById(vendorId);
+    } catch {
+      vendor = mockVendors.find(v => v.id === vendorId);
+    }
+
+    if (!vendor) {
+      return res.status(404).json({
+        success: false,
+        error: 'Vendor not found'
+      });
+    }
+
+    // Create quote request
+    const quoteRequest = new QuoteRequest({
+      userId: req.user.id,
+      vendorId: vendor._id || vendorId,
+      requirements,
+      assessmentData,
+      status: 'pending',
+    });
+
+    await quoteRequest.save();
+
+    // Update vendor stats
+    if (vendor._id) {
+      await Vendor.findByIdAndUpdate(vendor._id, {
+        $inc: { 'stats.quotesSent': 1 },
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        requestId: quoteRequest._id,
+        vendorId: vendorId,
+        status: 'Submitted',
+        estimatedResponse: '24-48 hours',
+        message: 'Quote request submitted successfully. The vendor will contact you soon.'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/marketplace/request-quote (unauthenticated fallback)
 router.post('/request-quote', (req, res) => {
   try {
     const { vendorId, requirements, contactInfo } = req.body;
     
-    // In production, this would send an email/SMS to the vendor
     res.json({
       success: true,
       data: {
@@ -230,6 +517,45 @@ router.post('/request-quote', (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// GET /api/marketplace/quote-requests
+router.get('/quote-requests', authMiddleware.auth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    
+    const quoteRequests = await QuoteRequest.getUserQuotes(req.user.id, status);
+
+    res.json({
+      success: true,
+      data: quoteRequests,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/marketplace/services
+router.get('/services', (req, res) => {
+  const services = [
+    'RTRWH Installation',
+    'Recharge Pit Construction',
+    'Maintenance',
+    'Consulting',
+    'Filter Systems',
+    'Tank Cleaning',
+    'Government Projects',
+    'Community RWH',
+    'Smart Monitoring',
+    'Commercial Systems',
+    'Residential RWH',
+    'Recharge Wells',
+  ];
+
+  res.json({
+    success: true,
+    data: services,
+  });
 });
 
 module.exports = router;

@@ -360,6 +360,11 @@ export default function Results() {
             <span>Check Subsidies</span>
             <ChevronRight className="w-5 h-5" />
           </Link>
+
+          <Link to="/implementation" className="btn-primary flex items-center space-x-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800">
+            <span>Start Implementation</span>
+            <ArrowRight className="w-5 h-5" />
+          </Link>
         </motion.div>
       </div>
     </div>

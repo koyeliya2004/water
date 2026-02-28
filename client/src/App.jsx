@@ -15,6 +15,8 @@ import Achievements from './pages/Achievements'
 import Challenges from './pages/Challenges'
 import Community from './pages/Community'
 import ARVisualization from './pages/ARVisualization'
+import Implementation from './pages/Implementation'
+import Blueprint from './pages/Blueprint'
 import { AuthProvider } from './context/AuthContext'
 
 function App() {
@@ -28,6 +30,8 @@ function App() {
               <Route path="/" element={<Home />} />
               <Route path="/assessment" element={<Assessment />} />
               <Route path="/results" element={<Results />} />
+              <Route path="/implementation" element={<Implementation />} />
+              <Route path="/blueprint" element={<Blueprint />} />
               <Route path="/leaderboard" element={<Leaderboard />} />
               <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/aquifer" element={<AquiferInfo />} />
