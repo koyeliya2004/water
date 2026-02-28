@@ -35,6 +35,12 @@ const communityRoutes = require('./routes/community');
 const impactRoutes = require('./routes/impact');
 const socialRoutes = require('./routes/social');
 
+// Phase 5 Routes
+const vendorAuthRoutes = require('./routes/vendorAuth');
+const implementationRoutes = require('./routes/implementation');
+const pricesRoutes = require('./routes/prices');
+const notificationsRoutes = require('./routes/notifications');
+
 app.use('/api/assessment', assessmentRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/aquifer', aquiferRoutes);
@@ -51,6 +57,12 @@ app.use('/api/challenges', challengesRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/impact', impactRoutes);
 app.use('/api/social', socialRoutes);
+
+// Phase 5 Routes
+app.use('/api/vendor', vendorAuthRoutes);
+app.use('/api/implementation', implementationRoutes);
+app.use('/api/prices', pricesRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
